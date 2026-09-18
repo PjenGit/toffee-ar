@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>Living Book AR</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+<style>
+  #hint{position:fixed;left:0;right:0;bottom:24px;margin:0 auto;width:max-content;
+    max-width:90vw;padding:10px 18px;z-index:10;font:500 15px/1.4 system-ui,sans-serif;
+    color:#fff;background:rgba(0,0,0,.55);border-radius:999px;text-align:center;transition:opacity .4s}
+  #hint.hide{opacity:0}
+</style>
+<script>
+/* Builds a real video texture in code (this fixes the black square),
+   and keys out the green so only the cat shows. EASY TWEAKS marked below. */
+AFRAME.registerComponent('chromakey-video', {
+  schema: {
+    src:       {type:'selector'},
+    width:     {type:'number', default:1.35},
+    height:    {type:'number', default:2.4},
+    threshold: {type:'number', default:0.35},   // TWEAK: higher removes more green
+    flip:      {type:'boolean', default:false}   // TWEAK: true if the cat is upside-down
+  },
+  init: function () {
+    const video = this.data.src;
+    const tex = new THREE.VideoTexture(video);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      side: THREE.DoubleSide,
+      uniforms: {
+        map:       {value: tex},
+        keyColor:  {value: new THREE.Vector3(0.42, 0.99, 0.0)},
+        threshold: {value: this.data.threshold},
+        flipY:     {value: this.data.flip ? 1.0 : 0.0}
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+      `,
+      fragmentShader: `
+        precision mediump float;
+        uniform sampler2D map; uniform vec3 keyColor; uniform float threshold; uniform float flipY;
+        varying vec2 vUv;
+        void main(){
+          vec2 uv = vec2(vUv.x, mix(vUv.y, 1.0 - vUv.y, flipY));
+          vec4 c = texture2D(map, uv);
+          if (distance(c.rgb, keyColor) < threshold) discard;
+          gl_FragColor = vec4(c.rgb, 1.0);
+        }
+      `
+    });
+    const geo = new THREE.PlaneGeometry(this.data.width, this.data.height);
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.el.setObject3D('chroma', this.mesh);
+  },
+  remove: function () { if (this.mesh) this.el.removeObject3D('chroma'); }
+});
+</script>
+</head>
+<body>
+  <p id="hint">Point your camera at the picture</p>
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; uiScanning: no; uiLoading: no;
+                  filterMinCF: 0.00008; filterBeta: 0.002;
+                  warmupTolerance: 2; missTolerance: 22;"
+    color-space="sRGB"
+    renderer="colorManagement: true, alpha: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+    <a-assets>
+      <video id="catvid" src="./animation-cat.mp4"
+             loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
+    </a-assets>
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    <a-entity mindar-image-target="targetIndex: 0" cat-layer>
+      <a-entity chromakey-video="src: #catvid; width: 1.35; height: 2.4; threshold: 0.35"
+                position="0 0.35 0.02"></a-entity>
+    </a-entity>
+  </a-scene>
+  <script>
+    AFRAME.registerComponent('cat-layer', {
+      init: function () {
+        const vid = document.querySelector('#catvid');
+        const hint = document.querySelector('#hint');
+        this.el.addEventListener('targetFound', () => { hint.classList.add('hide'); vid.play().catch(()=>{}); });
+        this.el.addEventListener('targetLost',  () => { hint.classList.remove('hide'); vid.pause(); });
+      }
+    });
+  </script>
+</body>
+</html>
